@@ -1,0 +1,46 @@
+sovereign-engine/
+│
+├── engines/
+│   ├── swing/                       ← NEW Phase 1
+│   │   ├── technical_engine.py      ← RSI, MACD, Bollinger, EMA
+│   │   ├── breakout_scanner.py      ← Volume surge, 52W, consolidation
+│   │   ├── stop_target.py           ← ATR stop, 1:2 R/R target
+│   │   └── swing_signal_engine.py   ← ENTRY/EXIT/HOLD signal
+│   │
+│   ├── multibagger/                 ← NEW Phase 2
+│   │   ├── quality_filter.py        ← ROE, CAGR, CFO/PAT, debt screen
+│   │   ├── early_signal_detector.py ← Promoter buying, FII entry, beats
+│   │   ├── tam_scorer.py            ← Sector tailwind, TAM runway
+│   │   └── conviction_scorer.py     ← Final score + tranche entry plan
+│   │
+│   ├── analysis/                    ← EXISTING (unchanged)
+│   ├── score_engine/                ← EXISTING (unchanged)
+│   ├── risk/                        ← EXTENDED Phase 3
+│   │   ├── vix_filter.py            ← EXTENDED: per-strategy VIX routing
+│   │   ├── strategy_sizing.py       ← NEW: swing/pos/MB position sizing
+│   │   ├── exposure_limits.py       ← NEW: per-strategy exposure caps
+│   │   ├── correlation.py           ← EXISTING
+│   │   └── portfolio_limits.py      ← EXISTING
+│   │
+│   ├── pipeline.py                  ← EXTENDED: MultiStrategyOrchestrator
+│   ├── valuation_engine.py          ← EXISTING
+│   ├── signal_engine.py             ← EXTENDED: strategy_tag field
+│   ├── portfolio_engine.py          ← EXTENDED: strategy-aware positions
+│   ├── portfolio_simulator.py       ← EXISTING
+│   └── alert_engine.py              ← EXTENDED: 3 strategy alert types
+│
+├── backtest/                        ← NEW Phase 6
+│   ├── swing_backtest.py            ← 6M historical win rate, R/R
+│   └── multibagger_simulator.py     ← 3Y return simulation
+│
+├── runtime/
+│   ├── stocks.db                    ← EXISTING (positional)
+│   ├── swing_trades.db              ← NEW (swing signals, P&L, journal)
+│   ├── multibaggers.db              ← NEW (candidates, tracking, tranches)
+│   ├── pit_store.db                 ← EXISTING
+│   ├── cache.db                     ← EXISTING
+│   └── ops.db                       ← EXISTING
+│
+└── app/
+    ├── streamlit_app.py             ← EXTENDED: 14 pages
+    └── scheduler.py                 ← EXTENDED: 3 schedule cadences

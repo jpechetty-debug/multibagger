@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign v3 — Three Strategy Engine</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #080b10;
+  --bg2:      #0d1119;
+  --bg3:      #121820;
+  --bg4:      #161e2a;
+  --border:   #1c2535;
+  --border2:  #243040;
+  --text:     #dde3ee;
+  --muted:    #5d6e8a;
+  --dim:      #2e3d52;
+  --swing:    #f0a040;
+  --swing2:   rgba(240,160,64,.12);
+  --swing3:   rgba(240,160,64,.06);
+  --pos:      #3d9ef5;
+  --pos2:     rgba(61,158,245,.12);
+  --pos3:     rgba(61,158,245,.06);
+  --mb:       #36d9a0;
+  --mb2:      rgba(54,217,160,.12);
+  --mb3:      rgba(54,217,160,.06);
+  --red:      #e8504a;
+  --red2:     rgba(232,80,74,.1);
+  --amber:    #f0a040;
+  --r:        8px;
+  --rs:       5px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Syne',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  font-size:13px;
+  line-height:1.5;
+  min-height:100vh;
+}
+
+/* ─── TAPE ─────────────────────────────── */
+.tape{
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  height:30px;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+}
+.tape-inner{
+  display:flex;
+  white-space:nowrap;
+  animation:scroll 50s linear infinite;
+}
+@keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.ti{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:0 18px;
+  border-right:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;
+}
+.ti-n{color:var(--muted)}
+.ti-p{color:var(--text);font-weight:500}
+.ti-c.up{color:var(--mb)}
+.ti-c.dn{color:var(--red)}
+
+/* ─── NAV ───────────────────────────────── */
+nav{
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  height:54px;
+  padding:0 20px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{
+  width:30px;height:30px;
+  background:linear-gradient(135deg,var(--mb),var(--pos));
+  border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;
+  font-size:13px;font-weight:500;color:#000;
+}
+.logo-text{
+  font-family:'Instrument Serif',serif;
+  font-size:18px;
+  letter-spacing:.01em;
+}
+.logo-v{
+  font-size:10px;color:var(--muted);
+  background:var(--bg3);
+  padding:2px 8px;
+  border-radius:20px;
+  border:1px solid var(--border2);
+  font-family:'Syne',sans-serif;
+}
+.strategy-tabs{display:flex;gap:4px}
+.stab{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 14px;
+  border-radius:var(--rs);
+  font-size:12.5px;font-weight:500;
+  color:var(--muted);cursor:pointer;
+  border:1px solid transparent;
+  transition:all .15s;
+}
+.stab:hover{color:var(--text);background:var(--bg3)}
+.stab .dot{width:6px;height:6px;border-radius:50%}
+.stab.sw.active{color:var(--swing);background:var(--swing3);border-color:rgba(240,160,64,.2)}
+.stab.po.active{color:var(--pos);background:var(--pos3);border-color:rgba(61,158,245,.2)}
+.stab.mb.active{color:var(--mb);background:var(--mb3);border-color:rgba(54,217,160,.2)}
+.stab.all.active{color:var(--text);background:var(--bg3);border-color:var(--border2)}
+.nav-right{display:flex;align-items:center;gap:10px}
+.vix-chip{
+  display:flex;align-items:center;gap:5px;
+  padding:5px 11px;
+  border-radius:20px;
+  font-size:11px;font-weight:500;
+  font-family:'JetBrains Mono',monospace;
+}
+.vix-safe{background:var(--mb2);color:var(--mb);border:1px solid rgba(54,217,160,.2)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--mb);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.run-btn{
+  background:var(--mb);color:#000;border:none;
+  padding:7px 16px;border-radius:var(--rs);
+  font-family:'Syne',sans-serif;font-size:12.5px;font-weight:600;
+  cursor:pointer;transition:opacity .15s;
+}
+.run-btn:hover{opacity:.85}
+
+/* ─── STRATEGY STRIP ────────────────────── */
+.strategy-strip{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:0;
+  border-bottom:1px solid var(--border);
+}
+.ss-card{
+  padding:14px 20px;
+  border-right:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.ss-card:last-child{border-right:none}
+.ss-left{display:flex;flex-direction:column;gap:4px}
+.ss-label{
+  font-size:10px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.1em;
+}
+.ss-label.sw{color:var(--swing)}
+.ss-label.po{color:var(--pos)}
+.ss-label.mb{color:var(--mb)}
+.ss-counts{display:flex;gap:14px;align-items:baseline}
+.ss-big{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:500}
+.ss-big.sw{color:var(--swing)}
+.ss-big.po{color:var(--pos)}
+.ss-big.mb{color:var(--mb)}
+.ss-sub{font-size:11px;color:var(--muted)}
+.ss-right{text-align:right}
+.ss-horizon{font-size:10.5px;color:var(--muted)}
+.ss-vix{
+  font-size:10px;font-family:'JetBrains Mono',monospace;
+  margin-top:3px;
+}
+.ss-vix.ok{color:var(--mb)}
+.ss-vix.warn{color:var(--amber)}
+
+/* ─── PAGE ──────────────────────────────── */
+.page{
+  display:grid;
+  grid-template-columns:1fr 1fr 360px;
+  grid-template-rows:auto auto;
+  gap:16px;
+  padding:16px 20px;
+}
+
+/* ─── CARD ──────────────────────────────── */
+.card{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  padding:14px 16px;
+  position:relative;
+  overflow:hidden;
+}
+.card-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:12px;
+}
+.card-title{
+  font-size:11.5px;font-weight:600;
+  display:flex;align-items:center;gap:7px;
+}
+.card-action{font-size:11px;color:var(--muted);cursor:pointer}
+.card-action:hover{color:var(--text)}
+.pill{
+  font-size:9.5px;font-weight:600;
+  padding:2px 7px;border-radius:20px;
+}
+.pill-sw{background:var(--swing3);color:var(--swing)}
+.pill-po{background:var(--pos3);color:var(--pos)}
+.pill-mb{background:var(--mb3);color:var(--mb)}
+.pill-red{background:var(--red2);color:var(--red)}
+
+/* ─── SWING TABLE ───────────────────────── */
+.stbl-head{
+  display:grid;
+  grid-template-columns:28px 1fr 70px 68px 68px 72px 68px;
+  padding:8px 10px;
+  background:var(--bg3);
+  border-radius:var(--rs) var(--rs) 0 0;
+  border:1px solid var(--border);
+  font-size:10px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em;
+  border-bottom:none;
+}
+.stbl-row{
+  display:grid;
+  grid-template-columns:28px 1fr 70px 68px 68px 72px 68px;
+  padding:9px 10px;
+  border:1px solid var(--border);
+  border-top:none;
+  align-items:center;
+  cursor:pointer;
+  transition:background .1s;
+}
+.stbl-row:hover{background:rgba(255,255,255,.02)}
+.stbl-row:last-child{border-radius:0 0 var(--rs) var(--rs)}
+.tr{text-align:right}
+.mono{font-family:'JetBrains Mono',monospace;font-size:11.5px}
+.up{color:var(--mb)}
+.dn{color:var(--red)}
+.nm{color:var(--muted)}
+.rnum{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim)}
+.tc{display:flex;flex-direction:column;gap:1px}
+.ts{font-weight:600;font-size:12.5px}
+.tn{font-size:10px;color:var(--muted)}
+.sbadge{
+  font-size:9.5px;font-weight:700;
+  padding:3px 8px;border-radius:20px;
+  text-align:center;letter-spacing:.04em;
+}
+.sb-entry{background:var(--mb2);color:var(--mb);border:1px solid rgba(54,217,160,.2)}
+.sb-watch{background:var(--swing2);color:var(--swing);border:1px solid rgba(240,160,64,.2)}
+.sb-exit{background:var(--red2);color:var(--red);border:1px solid rgba(232,80,74,.2)}
+
+/* ─── MB CANDIDATES ─────────────────────── */
+.mb-list{display:flex;flex-direction:column;gap:9px}
+.mb-row{
+  display:flex;gap:10px;align-items:flex-start;
+  padding:11px 12px;
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--rs);
+  cursor:pointer;
+  transition:border-color .15s;
+  position:relative;
+  overflow:hidden;
+}
+.mb-row::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+}
+.mb-row.s1::before{background:var(--mb)}
+.mb-row.s2::before{background:var(--pos)}
+.mb-row.s3::before{background:var(--swing)}
+.mb-row:hover{border-color:var(--border2)}
+.mb-rank{
+  font-family:'JetBrains Mono',monospace;
+  font-size:18px;font-weight:500;
+  min-width:28px;line-height:1;
+  margin-top:2px;
+}
+.mb-rank.s1{color:var(--mb)}
+.mb-rank.s2{color:var(--pos)}
+.mb-rank.s3{color:var(--swing)}
+.mb-info{flex:1}
+.mb-sym{font-size:13.5px;font-weight:700}
+.mb-name{font-size:10.5px;color:var(--muted);margin-top:1px}
+.mb-tags{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+.tag{
+  font-size:9.5px;padding:2px 7px;
+  border-radius:3px;
+  background:var(--bg4);
+  border:1px solid var(--border2);
+  color:var(--muted);
+}
+.mb-right{text-align:right}
+.mb-score{
+  font-family:'JetBrains Mono',monospace;
+  font-size:20px;font-weight:500;
+}
+.mb-score.s1{color:var(--mb)}
+.mb-score.s2{color:var(--pos)}
+.mb-score.s3{color:var(--swing)}
+.mb-horizon{font-size:10px;color:var(--muted);margin-top:2px}
+.mb-upside{font-size:11px;margin-top:4px}
+
+/* ─── RIGHT PANEL ───────────────────────── */
+.right-panel{
+  grid-column:3;grid-row:1/3;
+  display:flex;flex-direction:column;gap:14px;
+}
+
+/* ─── REGIME CARD ───────────────────────── */
+.regime-grid{
+  display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;
+  margin-bottom:10px;
+}
+.rg-cell{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--rs);padding:9px 10px;
+  display:flex;flex-direction:column;gap:3px;
+}
+.rg-strategy{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.rg-strategy.sw{color:var(--swing)}
+.rg-strategy.po{color:var(--pos)}
+.rg-strategy.mb{color:var(--mb)}
+.rg-status{font-size:13px;font-weight:600}
+.rg-status.ok{color:var(--mb)}
+.rg-status.warn{color:var(--swing)}
+.rg-vix{font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--muted)}
+
+/* ─── SECTOR BARS ───────────────────────── */
+.sec-list{display:flex;flex-direction:column;gap:8px}
+.sec-row{display:flex;flex-direction:column;gap:4px}
+.sec-meta{display:flex;justify-content:space-between;align-items:center}
+.sec-name{font-size:12px}
+.sec-ct{font-size:10.5px;color:var(--muted)}
+.sec-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.sec-fill{height:100%;border-radius:2px}
+
+/* ─── TRANCHE TRACKER ───────────────────── */
+.tranche-list{display:flex;flex-direction:column;gap:8px}
+.tranche-row{
+  background:var(--bg3);border:1px solid var(--border);
+  border-radius:var(--rs);padding:10px 12px;
+  display:flex;flex-direction:column;gap:6px;
+}
+.tr-hdr{display:flex;justify-content:space-between;align-items:center}
+.tr-sym{font-weight:700;font-size:12.5px}
+.tr-total{font-size:11px;color:var(--muted)}
+.tr-dots{display:flex;gap:4px}
+.tr-dot{
+  width:22px;height:7px;border-radius:2px;
+}
+.tr-dot.filled{background:var(--mb)}
+.tr-dot.empty{background:var(--border2)}
+.tr-meta{display:flex;justify-content:space-between}
+.tr-entry{font-size:10.5px;color:var(--muted)}
+.tr-pnl{font-family:'JetBrains Mono',monospace;font-size:11px}
+
+/* ─── ALERTS ────────────────────────────── */
+.alert-list{display:flex;flex-direction:column;gap:6px}
+.alert-item{
+  display:flex;gap:9px;align-items:flex-start;
+  padding:9px 11px;
+  background:var(--bg3);
+  border-radius:var(--rs);
+  border:1px solid var(--border);
+  border-left:3px solid transparent;
+}
+.al-sw{border-left-color:var(--swing)}
+.al-po{border-left-color:var(--pos)}
+.al-mb{border-left-color:var(--mb)}
+.al-risk{border-left-color:var(--red)}
+.al-body{flex:1}
+.al-title{font-size:12px;font-weight:500}
+.al-time{font-size:10px;color:var(--muted);margin-top:2px}
+
+/* ─── BOTTOM ROW ────────────────────────── */
+.bottom-row{
+  grid-column:1/3;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+}
+
+/* ─── OWNERSHIP FLAGS ───────────────────── */
+.own-list{display:flex;flex-direction:column;gap:7px}
+.own-row{
+  display:grid;
+  grid-template-columns:1fr 80px 80px 80px 80px;
+  padding:9px 12px;
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--rs);
+  align-items:center;
+  font-size:12px;
+}
+.own-row.hdr{
+  font-size:10px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em;
+}
+.own-val{font-family:'JetBrains Mono',monospace;text-align:right;font-size:11.5px}
+.own-flag{color:var(--swing)}
+.own-ok{color:var(--mb)}
+.own-sym{font-weight:700}
+.own-sec{font-size:10px;color:var(--muted)}
+
+/* ─── VIX GAUGE ─────────────────────────── */
+.gauge-section{display:flex;gap:20px;align-items:flex-start}
+.gauge-main{text-align:center;flex:1}
+.gauge-val{font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:500;color:var(--mb);margin-top:6px}
+.gauge-sub{font-size:11px;color:var(--muted)}
+.gauge-rules{display:flex;flex-direction:column;gap:6px;flex:1}
+.gr-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 10px;
+  background:var(--bg3);border-radius:var(--rs);
+  border:1px solid var(--border);
+}
+.gr-label{font-size:11px;color:var(--muted)}
+.gr-val{font-family:'JetBrains Mono',monospace;font-size:11px}
+.gr-ok{color:var(--mb)}
+.gr-warn{color:var(--swing)}
+.gr-halt{color:var(--red)}
+
+/* ─── ANIMATIONS ────────────────────────── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.ss-card{animation:fadeUp .35s ease both}
+.ss-card:nth-child(1){animation-delay:.05s}
+.ss-card:nth-child(2){animation-delay:.12s}
+.ss-card:nth-child(3){animation-delay:.19s}
+.card{animation:fadeUp .4s ease both}
+
+/* ─── SCROLLBAR ─────────────────────────── */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- TICKER TAPE -->
+<div class="tape">
+  <div class="tape-inner" id="tape"></div>
+</div>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">
+    <div class="logo-icon">S</div>
+    <span class="logo-text">Sovereign</span>
+    <span class="logo-v">v3 · Three Strategy</span>
+  </div>
+
+  <div class="strategy-tabs">
+    <div class="stab all active" onclick="setTab(this,'all')">All strategies</div>
+    <div class="stab sw" onclick="setTab(this,'sw')">
+      <div class="dot" style="background:var(--swing)"></div> Swing
+    </div>
+    <div class="stab po" onclick="setTab(this,'po')">
+      <div class="dot" style="background:var(--pos)"></div> Positional
+    </div>
+    <div class="stab mb" onclick="setTab(this,'mb')">
+      <div class="dot" style="background:var(--mb)"></div> Multibagger
+    </div>
+    <div class="stab" onclick="setTab(this,'')">Fair Value</div>
+    <div class="stab" onclick="setTab(this,'')">Sector</div>
+    <div class="stab" onclick="setTab(this,'')">Risk</div>
+    <div class="stab" onclick="setTab(this,'')">Portfolio</div>
+    <div class="stab" onclick="setTab(this,'')">Logs</div>
+  </div>
+
+  <div class="nav-right">
+    <div class="vix-chip vix-safe">
+      <div class="pulse"></div>
+      India VIX 14.2 — Normal
+    </div>
+    <button class="run-btn">Run All Scans</button>
+  </div>
+</nav>
+
+<!-- STRATEGY STRIP -->
+<div class="strategy-strip">
+  <div class="ss-card">
+    <div class="ss-left">
+      <div class="ss-label sw">Swing trades</div>
+      <div class="ss-counts">
+        <span class="ss-big sw">8</span>
+        <span class="ss-sub">entry · 3 exit signals</span>
+      </div>
+    </div>
+    <div class="ss-right">
+      <div class="ss-horizon">1–5 day · 30min scan</div>
+      <div class="ss-vix ok">VIX 14.2 &lt; 25 ✓ Active</div>
+    </div>
+  </div>
+  <div class="ss-card">
+    <div class="ss-left">
+      <div class="ss-label po">Positional</div>
+      <div class="ss-counts">
+        <span class="ss-big po">23</span>
+        <span class="ss-sub">BUY · 41 watch</span>
+      </div>
+    </div>
+    <div class="ss-right">
+      <div class="ss-horizon">3–12 week · daily scan</div>
+      <div class="ss-vix ok">VIX 14.2 &lt; 35 ✓ Active</div>
+    </div>
+  </div>
+  <div class="ss-card">
+    <div class="ss-left">
+      <div class="ss-label mb">Multibagger hunt</div>
+      <div class="ss-counts">
+        <span class="ss-big mb">12</span>
+        <span class="ss-sub">candidates · 4 new this week</span>
+      </div>
+    </div>
+    <div class="ss-right">
+      <div class="ss-horizon">3–5 year · weekly scan</div>
+      <div class="ss-vix ok">Never halts · long horizon</div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN PAGE -->
+<div class="page">
+
+  <!-- SWING SIGNALS (col 1) -->
+  <div class="card" style="grid-column:1">
+    <div class="card-hdr">
+      <div class="card-title">
+        <div class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--swing)"></div>
+        Swing signals
+        <span class="pill pill-sw">8 entry</span>
+      </div>
+      <span class="card-action">View all →</span>
+    </div>
+    <div class="stbl-head">
+      <div>#</div><div>Ticker</div>
+      <div class="tr">Price</div>
+      <div class="tr">Stop</div>
+      <div class="tr">Target</div>
+      <div class="tr">Setup</div>
+      <div class="tr">Signal</div>
+    </div>
+    <div id="swing-rows"></div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:10px;display:flex;align-items:center;gap:6px">
+      <div class="pulse"></div>
+      Last scan: 14:00 · Next scan: 14:30
+    </div>
+  </div>
+
+  <!-- MULTIBAGGER CANDIDATES (col 2) -->
+  <div class="card" style="grid-column:2">
+    <div class="card-hdr">
+      <div class="card-title">
+        <div class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--mb)"></div>
+        Multibagger candidates
+        <span class="pill pill-mb">12 total</span>
+      </div>
+      <span class="card-action">All candidates →</span>
+    </div>
+    <div class="mb-list" id="mb-list"></div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+
+    <!-- REGIME PER STRATEGY -->
+    <div class="card">
+      <div class="card-hdr"><div class="card-title">Strategy regime status</div></div>
+      <div class="regime-grid">
+        <div class="rg-cell">
+          <div class="rg-strategy sw">Swing</div>
+          <div class="rg-status ok">ACTIVE</div>
+          <div class="rg-vix">VIX &lt; 25 ✓</div>
+        </div>
+        <div class="rg-cell">
+          <div class="rg-strategy po">Positional</div>
+          <div class="rg-status ok">BULL</div>
+          <div class="rg-vix">VIX &lt; 35 ✓</div>
+        </div>
+        <div class="rg-cell">
+          <div class="rg-strategy mb">Multibagger</div>
+          <div class="rg-status ok">HUNTING</div>
+          <div class="rg-vix">No gate</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-direction:column">
+        <div class="gr-row"><span class="gr-label">India VIX</span><span class="gr-val gr-ok">14.2 — Normal</span></div>
+        <div class="gr-row"><span class="gr-label">Market breadth</span><span class="gr-val gr-ok">62% advancing</span></div>
+        <div class="gr-row"><span class="gr-label">Swing halt level</span><span class="gr-val">VIX &gt; 25</span></div>
+        <div class="gr-row"><span class="gr-label">Positional halt</span><span class="gr-val">VIX &gt; 35</span></div>
+        <div class="gr-row"><span class="gr-label">MB halt</span><span class="gr-val gr-ok">Never</span></div>
+      </div>
+    </div>
+
+    <!-- TRANCHE TRACKER -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title">
+          Tranche tracker
+          <span class="pill pill-mb">Multibagger</span>
+        </div>
+      </div>
+      <div class="tranche-list" id="tranche-list"></div>
+    </div>
+
+    <!-- RECENT ALERTS -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title">Recent alerts</div>
+        <span class="card-action">All →</span>
+      </div>
+      <div class="alert-list">
+        <div class="alert-item al-sw">
+          <div class="al-body">
+            <div class="al-title">Swing ENTRY — HCLTECH breakout ₹1,870</div>
+            <div class="al-time">Today 14:00 · Stop ₹1,818 · Target ₹1,964</div>
+          </div>
+        </div>
+        <div class="alert-item al-mb">
+          <div class="al-body">
+            <div class="al-title">MB candidate — KALYANKJIL added (score 87)</div>
+            <div class="al-time">Today 06:17 · Tranche 1 entry ₹94</div>
+          </div>
+        </div>
+        <div class="alert-item al-po">
+          <div class="al-body">
+            <div class="al-title">Positional BUY — TITAN (score 85)</div>
+            <div class="al-time">Today 06:17 · Fair value ₹3,980 · +16%</div>
+          </div>
+        </div>
+        <div class="alert-item al-sw">
+          <div class="al-body">
+            <div class="al-title">Swing EXIT — BAJFINANCE target hit ₹7,380</div>
+            <div class="al-time">Yesterday 15:15 · P&amp;L +₹8,400</div>
+          </div>
+        </div>
+        <div class="alert-item al-risk">
+          <div class="al-body">
+            <div class="al-title">Stale data — 3 tickers need refetch</div>
+            <div class="al-time">Yesterday 06:18</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW -->
+  <div class="bottom-row">
+
+    <!-- VIX + EXPOSURE -->
+    <div class="card">
+      <div class="card-hdr"><div class="card-title">India VIX + strategy exposure</div></div>
+      <div class="gauge-section">
+        <div class="gauge-main">
+          <svg width="130" height="76" viewBox="0 0 130 76">
+            <path d="M 15 68 A 52 52 0 0 1 115 68" fill="none" stroke="#1c2535" stroke-width="8" stroke-linecap="round"/>
+            <path d="M 15 68 A 52 52 0 0 1 115 68" fill="none" stroke="url(#g2)" stroke-width="8" stroke-linecap="round" stroke-dasharray="163" stroke-dashoffset="114"/>
+            <defs>
+              <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#36d9a0"/>
+                <stop offset="55%" stop-color="#f0a040"/>
+                <stop offset="100%" stop-color="#e8504a"/>
+              </linearGradient>
+            </defs>
+            <line x1="65" y1="68" x2="38" y2="28" stroke="#36d9a0" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="65" cy="68" r="4" fill="#36d9a0"/>
+            <text x="13" y="82" fill="#5d6e8a" font-size="8" font-family="JetBrains Mono">10</text>
+            <text x="55" y="12" fill="#5d6e8a" font-size="8" font-family="JetBrains Mono">25</text>
+            <text x="106" y="82" fill="#5d6e8a" font-size="8" font-family="JetBrains Mono">40</text>
+          </svg>
+          <div class="gauge-val">14.2</div>
+          <div class="gauge-sub">Safe zone</div>
+        </div>
+        <div class="gauge-rules" style="flex:2">
+          <div style="font-size:10.5px;color:var(--muted);margin-bottom:2px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Portfolio exposure</div>
+          <div class="gr-row">
+            <span class="gr-label">Swing (30% max)</span>
+            <span class="gr-val gr-ok">18% used</span>
+          </div>
+          <div class="gr-row">
+            <span class="gr-label">Positional (40% max)</span>
+            <span class="gr-val gr-ok">31% used</span>
+          </div>
+          <div class="gr-row">
+            <span class="gr-label">Multibagger (30% max)</span>
+            <span class="gr-val gr-warn">24% used</span>
+          </div>
+          <div class="gr-row">
+            <span class="gr-label">Cash reserve</span>
+            <span class="gr-val gr-ok">27% free</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OWNERSHIP FLAGS -->
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title">Ownership monitor
+          <span class="pill pill-sw">2 flags</span>
+        </div>
+      </div>
+      <div class="own-list">
+        <div class="own-row hdr">
+          <div>Ticker</div>
+          <div style="text-align:right">Promoter</div>
+          <div style="text-align:right">Pledge</div>
+          <div style="text-align:right">FII Δ</div>
+          <div style="text-align:right">Status</div>
+        </div>
+        <div id="own-rows"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// TAPE
+const td=[
+  {n:'NIFTY',p:'23,151',c:'+0.42%',u:true},{n:'SENSEX',p:'76,230',c:'+0.38%',u:true},
+  {n:'BANKNIFTY',p:'49,840',c:'+0.61%',u:true},{n:'NIFTYIT',p:'35,240',c:'-1.1%',u:false},
+  {n:'RELIANCE',p:'₹2,901',c:'+0.8%',u:true},{n:'HDFCBANK',p:'₹1,728',c:'+1.1%',u:true},
+  {n:'INFY',p:'₹1,276',c:'-0.7%',u:false},{n:'TCS',p:'₹3,810',c:'+0.3%',u:true},
+  {n:'TITAN',p:'₹3,402',c:'+1.9%',u:true},{n:'HCLTECH',p:'₹1,870',c:'+1.4%',u:true},
+  {n:'DEEPAKNITR',p:'₹2,140',c:'+3.2%',u:true},{n:'KALYANKJIL',p:'₹94',c:'+4.8%',u:true},
+  {n:'DIVISLABS',p:'₹4,820',c:'+0.9%',u:true},{n:'KOTAKBANK',p:'₹1,934',c:'+0.6%',u:true},
+];
+const tape=document.getElementById('tape');
+tape.innerHTML=[...td,...td].map(t=>`
+  <div class="ti">
+    <span class="ti-n">${t.n}</span>
+    <span class="ti-p">${t.p}</span>
+    <span class="ti-c ${t.u?'up':'dn'}">${t.u?'▲':'▼'} ${t.c}</span>
+  </div>`).join('');
+
+// SWING ROWS
+const swings=[
+  {r:1,sym:'HCLTECH',n:'HCL Technologies',p:'1,870',sl:'1,818',tgt:'1,964',setup:'Breakout',sig:'ENTRY'},
+  {r:2,sym:'TITAN',n:'Titan Company',p:'3,402',sl:'3,305',tgt:'3,596',setup:'Bounce',sig:'ENTRY'},
+  {r:3,sym:'DEEPAKNITR',n:'Deepak Nitrite',p:'2,140',sl:'2,076',tgt:'2,264',setup:'Breakout',sig:'ENTRY'},
+  {r:4,sym:'KOTAKBANK',n:'Kotak Bank',p:'1,934',sl:'1,878',tgt:'2,046',setup:'Pullback',sig:'ENTRY'},
+  {r:5,sym:'BAJFINANCE',n:'Bajaj Finance',p:'7,180',sl:'6,970',tgt:'7,600',setup:'Bounce',sig:'WATCH'},
+  {r:6,sym:'WIPRO',n:'Wipro',p:'204',sl:'197',tgt:'218',setup:'Oversold',sig:'WATCH'},
+  {r:7,sym:'INFY',n:'Infosys',p:'1,276',sl:'1,238',tgt:'0',setup:'—',sig:'EXIT'},
+];
+document.getElementById('swing-rows').innerHTML=swings.map(s=>{
+  const bc=s.sig==='ENTRY'?'sb-entry':s.sig==='WATCH'?'sb-watch':'sb-exit';
+  const rc=s.sig==='EXIT'?'dn':s.sig==='ENTRY'?'up':'nm';
+  return `<div class="stbl-row">
+    <div class="rnum">${s.r}</div>
+    <div class="tc"><span class="ts">${s.sym}</span><span class="tn">${s.n}</span></div>
+    <div class="mono tr">₹${s.p}</div>
+    <div class="mono tr dn">₹${s.sl}</div>
+    <div class="mono tr ${s.tgt!=='0'?'up':'nm'}">${s.tgt!=='0'?'₹'+s.tgt:'—'}</div>
+    <div class="mono tr nm" style="font-size:10.5px">${s.setup}</div>
+    <div class="tr"><span class="sbadge ${bc}">${s.sig}</span></div>
+  </div>`;
+}).join('');
+
+// MULTIBAGGER LIST
+const mbs=[
+  {r:1,sym:'KALYANKJIL',n:'Kalyan Jewellers',score:87,sector:'Retail',cls:'s1',
+   tags:['ROE 28%','CAGR 31%','Promoter 67%','FII entering'],upside:'+65% (3Y est)'},
+  {r:2,sym:'DEEPAKNITR',n:'Deepak Nitrite',score:85,sector:'Chemicals',cls:'s1',
+   tags:['ROE 24%','CAGR 22%','China+1','Clean debt'],upside:'+58% (3Y est)'},
+  {r:3,sym:'KPITTECH',n:'KPIT Technologies',score:83,sector:'IT-Auto',cls:'s2',
+   tags:['ROE 32%','CAGR 41%','EV tailwind','Global'],upside:'+72% (3Y est)'},
+  {r:4,sym:'TRENTLTD',n:'Trent (Zudio)',score:81,sector:'Retail',cls:'s2',
+   tags:['ROE 21%','CAGR 35%','Premiumisation','Tata'],upside:'+49% (3Y est)'},
+  {r:5,sym:'AUROPHARMA',n:'Aurobindo Pharma',score:78,sector:'Pharma',cls:'s3',
+   tags:['ROE 18%','US FDA clear','CFO 0.94','Low PEG'],upside:'+44% (3Y est)'},
+];
+document.getElementById('mb-list').innerHTML=mbs.map(m=>`
+  <div class="mb-row ${m.cls}">
+    <div class="mb-rank ${m.cls}">${m.r}</div>
+    <div class="mb-info">
+      <div class="mb-sym">${m.sym}</div>
+      <div class="mb-name">${m.n} · ${m.sector}</div>
+      <div class="mb-tags">${m.tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+    </div>
+    <div class="mb-right">
+      <div class="mb-score ${m.cls}">${m.score}</div>
+      <div class="mb-horizon">conviction</div>
+      <div class="mb-upside up">${m.upside}</div>
+    </div>
+  </div>`).join('');
+
+// TRANCHE TRACKER
+const tranches=[
+  {sym:'KALYANKJIL',filled:1,total:3,entry:'₹94 · T1 done',pnl:'+4.8%',c:'up'},
+  {sym:'DEEPAKNITR',filled:2,total:3,entry:'₹2,090 avg · T2 done',pnl:'+2.4%',c:'up'},
+  {sym:'KPITTECH',filled:1,total:3,entry:'₹1,240 · T1 done',pnl:'-1.2%',c:'dn'},
+  {sym:'TRENTLTD',filled:0,total:3,entry:'Waiting — T1 entry ₹5,200',pnl:'—',c:'nm'},
+];
+document.getElementById('tranche-list').innerHTML=tranches.map(t=>`
+  <div class="tranche-row">
+    <div class="tr-hdr">
+      <div class="tr-sym">${t.sym}</div>
+      <div class="tr-total">${t.filled}/3 tranches</div>
+    </div>
+    <div class="tr-dots">
+      ${[0,1,2].map(i=>`<div class="tr-dot ${i<t.filled?'filled':'empty'}"></div>`).join('')}
+    </div>
+    <div class="tr-meta">
+      <div class="tr-entry">${t.entry}</div>
+      <div class="tr-pnl ${t.c}">${t.pnl}</div>
+    </div>
+  </div>`).join('');
+
+// OWNERSHIP
+const owns=[
+  {sym:'TITAN',sec:'Consumer',pr:'52.9%',pl:'0.0%',fii:'+1.4%',ok:true},
+  {sym:'GMRINFRA',sec:'Infra',pr:'34.1%',pl:'18.4%',fii:'-0.8%',ok:false},
+  {sym:'RPOWER',sec:'Energy',pr:'17.1%',pl:'6.2%',fii:'-1.2%',ok:false},
+  {sym:'HCLTECH',sec:'IT',pr:'60.3%',pl:'0.0%',fii:'+2.1%',ok:true},
+  {sym:'DEEPAKNITR',sec:'Chemicals',pr:'45.4%',pl:'0.0%',fii:'+0.9%',ok:true},
+];
+document.getElementById('own-rows').innerHTML=owns.map(o=>`
+  <div class="own-row">
+    <div><div class="own-sym">${o.sym}</div><div class="own-sec">${o.sec}</div></div>
+    <div class="own-val ${parseFloat(o.pr)>50?'own-ok':'own-flag'}">${o.pr}</div>
+    <div class="own-val ${parseFloat(o.pl)>5?'own-flag':'own-ok'}">${o.pl}</div>
+    <div class="own-val ${o.fii.startsWith('+')?'up':'dn'}">${o.fii}</div>
+    <div class="own-val">${o.ok?'<span style="color:var(--mb)">✓ Clean</span>':'<span style="color:var(--swing)">⚠ Flag</span>'}</div>
+  </div>`).join('');
+
+// NAV TAB
+function setTab(el,type){
+  document.querySelectorAll('.stab').forEach(t=>{
+    t.classList.remove('active');
+  });
+  el.classList.add('active');
+}
+</script>
+</body>
+</html>

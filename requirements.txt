@@ -1,0 +1,17 @@
+typer==0.24.0
+rich==14.2.0
+pydantic==2.12.5
+pandas==3.0.1
+numpy==2.3.2
+scipy==1.16.1
+streamlit==1.51.0
+plotly==6.5.0
+yfinance==1.2.0
+requests==2.31.0
+nsepython==2.97
+xgboost==3.0.4
+scikit-learn==1.8.0
+shap==0.50.0
+lightgbm==4.5.0
+pytest==9.0.2
+APScheduler==3.11.1
