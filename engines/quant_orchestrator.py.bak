@@ -1,21 +1,8 @@
 """
 engines/quant_orchestrator.py
 ------------------------------
-Single entry point that wires regime classification → cycle detection →
-portfolio optimisation → Kelly sizing → advanced risk checks.
-
-Triple-gate exposure control
------------------------------
-1. Regime multiplier   — position_multiplier from 8-state RegimeTrackerV2
-2. Kelly sizer         — fractional Kelly preserves cash when edge is low
-3. Volatility scaling  — inverse-vol sizing equalises rupee risk per position
-
-Cycle-aware sector weights
---------------------------
-CycleDetector runs daily (via scheduler) and provides sector_multiplier()
-for each NSE sector.  QuantOrchestrator applies this as a fourth layer on
-top of the MVO weights — leaders get 1.2×, laggards get 0.6×, neutral 1.0×.
-All multipliers are capped so no single position exceeds max_position_pct.
+Single entry point that wires regime classification → portfolio
+optimisation → advanced risk checks into one pipeline call.
 """
 
 from __future__ import annotations
@@ -28,12 +15,11 @@ import pandas as pd
 
 from engines.regime.regime_engine import RegimeEngine, RegimeResult
 from engines.portfolio.optimizer import PortfolioOptimizer, PortfolioConstraints, PortfolioResult
-from engines.risk.advanced_risk import AdvancedRiskEngine, RiskCheckResult
+from engines.risk.advanced.risk_engine import AdvancedRiskEngine, RiskCheckResult
 from engines.risk.advanced_risk import VaREngine, DrawdownGuard
 from engines.risk.factor_audit import FactorAudit, FactorAuditReport
 from engines.ml.performance_tracker import PerformanceTracker
 from engines.portfolio.kelly_sizer import KellySizer
-from engines.analysis.cycle_detector import CycleDetector
 
 
 # ---------------------------------------------------------------------------
@@ -80,17 +66,8 @@ class QuantResult:
 
 class QuantOrchestrator:
     """
-    Coordinates the engines in the correct sequence:
-    Regime → Cycle → Filter → MVO → Kelly → Vol-scale → Risk → Record
-
-    CycleDetector integration
-    -------------------------
-    Loads the latest daily cycle snapshot (saved by scheduler at 07:00 IST).
-    Applies sector_multiplier() to each position's weight after MVO + Kelly.
-    Leaders (e.g. Financials in EARLY cycle) get up to 1.2× boost.
-    Laggards (e.g. FMCG in EARLY cycle) get 0.6× reduction.
-    All final weights are re-capped to max_position_pct after adjustment.
-    Falls back gracefully if no cycle snapshot exists yet.
+    Coordinates the engines in the correct sequence.
+    Now with VaR, Drawdown Guard, and Factor Audit.
     """
 
     def __init__(
@@ -100,23 +77,22 @@ class QuantOrchestrator:
         max_correlation: float = 0.75,
         target_daily_vol_pct: float = 1.5,
     ):
-        self.total_capital  = total_capital
-        self.regime_engine  = RegimeEngine()
-        self.risk_engine    = AdvancedRiskEngine(
+        self.total_capital = total_capital
+        self.regime_engine = RegimeEngine()
+        self.risk_engine   = AdvancedRiskEngine(
             max_correlation=max_correlation,
             target_daily_vol_pct=target_daily_vol_pct,
         )
-        self.var_engine     = VaREngine()
-        self.dd_guard       = DrawdownGuard()
-        self.factor_audit   = FactorAudit()
-        self._constraints   = constraints or PortfolioConstraints()
-        self.kelly_sizer    = KellySizer(
+        self.var_engine    = VaREngine()
+        self.dd_guard      = DrawdownGuard()
+        self.factor_audit  = FactorAudit()
+        self._constraints  = constraints or PortfolioConstraints()
+        self.kelly_sizer   = KellySizer(
             kelly_fraction=0.25,
             max_weight=self._constraints.max_position_pct,
         )
-        self.tracker        = PerformanceTracker()
-        self.cycle_detector = CycleDetector()
-        self.holding_days   = 20
+        self.tracker       = PerformanceTracker()
+        self.holding_days  = 20
 
     def run(
         self,
@@ -175,38 +151,9 @@ class QuantOrchestrator:
                 pos.weight = kelly_weights[pos.ticker]
                 pos.position_pct = pos.weight * 100
                 pos.capital_allocated = portfolio.effective_capital * pos.weight
-
+        
         if kelly_res.cash_implied > 0.15:
             portfolio.warnings.append(kelly_res.summary())
-
-        # ── Step 4.6: Cycle-aware sector weight adjustment ────────────────────
-        # Load the latest daily cycle snapshot (saved by scheduler at 07:00 IST).
-        # Adjusts MVO+Kelly weights up/down based on sector cycle phase.
-        # Falls back gracefully if snapshot is missing.
-        cycle_result = self.cycle_detector.load_latest()
-        if cycle_result is not None:
-            max_pos = self._constraints.max_position_pct
-            for pos in portfolio.positions:
-                # Look up sector from signal records
-                sig = next((s for s in corr_filtered if s.get("ticker") == pos.ticker), {})
-                sector = sig.get("sector", "")
-                if sector:
-                    mult = cycle_result.sector_multiplier(sector)
-                    new_w = min(pos.weight * mult, max_pos)
-                    pos.weight = new_w
-                    pos.position_pct = new_w * 100
-                    pos.capital_allocated = portfolio.effective_capital * new_w
-            # Re-normalise so weights still reflect intended deployment fraction
-            total_w = sum(p.weight for p in portfolio.positions)
-            if total_w > 0:
-                for pos in portfolio.positions:
-                    pos.weight = round(pos.weight / total_w * min(total_w, 1.0), 4)
-                    pos.position_pct = pos.weight * 100
-                    pos.capital_allocated = portfolio.effective_capital * pos.weight
-            portfolio.warnings.append(
-                f"Cycle: {cycle_result.phase} (conf {cycle_result.confidence:.0%}) "
-                f"bias {cycle_result.position_bias:.2f}x"
-            )
 
         # ── Step 5: Volatility-scale the optimised weights ────────────────────
         raw_weights = {p.ticker: p.weight for p in portfolio.positions}

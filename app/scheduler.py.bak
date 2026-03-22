@@ -19,10 +19,6 @@ from engines.pipeline import PipelineOrchestrator
 from engines.ml.trainer import SovereignTrainer
 from engines.ml.decay_tracker import ModelDecayTracker
 from ticker_list import get_universe
-import time  # noqa: E402  (needed for job timestamps)
-from engines.monitoring.metrics import sovereign_metrics
-from engines.analysis.cycle_detector import CycleDetector
-from engines.ml.model_guard import ModelGuard
 
 
 class AppScheduler:
@@ -120,35 +116,6 @@ class AppScheduler:
             self.run_daily_backup,
             CronTrigger(hour=config.DAILY_SCAN_HOUR - 1, minute=0, timezone=config.SCHEDULER_TIMEZONE),
             id="daily_backup",
-            replace_existing=True,
-        )
-        # Metrics refresh — every 60 seconds
-        self.scheduler.add_job(
-            self.refresh_metrics,
-            "interval",
-            seconds=60,
-            id="metrics_refresh",
-            replace_existing=True,
-        )
-        # Fyers token refresh — daily at 07:45 IST (before market open)
-        self.scheduler.add_job(
-            self.refresh_fyers_token,
-            CronTrigger(hour=7, minute=45, day_of_week="mon-fri", timezone=config.SCHEDULER_TIMEZONE),
-            id="fyers_token_refresh",
-            replace_existing=True,
-        )
-        # Cycle detection — daily at 07:00 IST
-        self.scheduler.add_job(
-            self.run_cycle_detection,
-            CronTrigger(hour=7, minute=0, day_of_week="mon-fri", timezone=config.SCHEDULER_TIMEZONE),
-            id="cycle_detection",
-            replace_existing=True,
-        )
-        # OOS vs live comparison — daily at 17:00 IST (after close)
-        self.scheduler.add_job(
-            self.run_oos_comparison,
-            CronTrigger(hour=17, minute=0, day_of_week="mon-fri", timezone=config.SCHEDULER_TIMEZONE),
-            id="oos_comparison",
             replace_existing=True,
         )
 
@@ -334,116 +301,6 @@ class AppScheduler:
             db.log_job_run("daily_backup", started_at, int(time.time()), "FAIL", str(exc))
             db.log_backup("N/A", f"FAIL: {str(exc)}", False)
             raise
-
-
-    def refresh_metrics(self) -> dict:
-        """Update all Prometheus metrics from the ops database."""
-        try:
-            sovereign_metrics.update_from_db()
-            return {"status": "ok", "metrics": len(sovereign_metrics._all)}
-        except Exception as exc:
-            return {"status": "error", "error": str(exc)}
-
-    def refresh_fyers_token(self) -> dict:
-        """
-        Check Fyers token age and warn if expiry is near.
-        Auto-refresh requires a stored refresh_token — if absent, logs a warning
-        so the operator knows to re-authenticate before market open.
-        """
-        import json
-        from pathlib import Path
-        token_path = Path("runtime/fyers_token.json")
-        if not token_path.exists():
-            db.log_engine_event("WARN", "app.scheduler", "fyers_token_refresh",
-                                {"status": "token_file_missing"})
-            return {"status": "token_file_missing"}
-        try:
-            data     = json.loads(token_path.read_text())
-            age_h    = (time.time() - data.get("created_at", 0)) / 3600
-            if age_h > 20:
-                db.log_engine_event("WARN", "app.scheduler", "fyers_token_refresh",
-                                    {"status": "token_stale", "age_hours": round(age_h, 1)})
-                try:
-                    self.alert_engine.send_custom_alert(
-                        "⚠️ Fyers Token Stale",
-                        f"Token is {age_h:.1f}h old. Re-authenticate before market open."
-                    )
-                except Exception:
-                    pass
-                return {"status": "stale", "age_hours": round(age_h, 1)}
-            return {"status": "ok", "age_hours": round(age_h, 1)}
-        except Exception as exc:
-            return {"status": "error", "error": str(exc)}
-
-    def run_cycle_detection(self) -> dict:
-        """Run market cycle detection and persist snapshot."""
-        try:
-            from engines.regime.regime_engine import RegimeEngine
-            from engines.risk.vix_filter import VixFilter
-            regime_result = RegimeEngine().classify()
-            vix_result    = VixFilter().evaluate()
-            payload = regime_result.to_payload()
-            market_data = {
-                "nifty_close":         payload.get("signals", {}).get("nifty_trend", 50) * 235 + 21000,
-                "breadth_slope_20d":   payload.get("composite_score", 50) / 50 - 1,
-                "cyclical_vs_defensive": (payload.get("signals", {}).get("sector_strength", 50) - 50) / 10,
-                "gsec_10y":            6.85,
-                "repo_rate":           6.5,
-                "net_fii_20d_cr":      payload.get("signals", {}).get("fii_flow", 50) * 200 - 5000,
-                "fii_cyclical_pct":    payload.get("signals", {}).get("sector_strength", 50),
-            }
-            detector = CycleDetector()
-            result   = detector.detect(market_data)
-            detector.save_snapshot(result)
-            sovereign_metrics.regime_composite_score.set(payload.get("composite_score", 0))
-            db.log_engine_event("INFO", "app.scheduler", "cycle_detection",
-                                {"phase": result.phase, "confidence": result.confidence})
-            return result.to_dict()
-        except Exception as exc:
-            db.log_engine_event("WARN", "app.scheduler", "cycle_detection_failed", {"error": str(exc)})
-            return {"error": str(exc)}
-
-    def run_oos_comparison(self) -> dict:
-        """
-        Compare live vs OOS performance and activate model guard if decayed.
-        Runs after market close — uses today's outcomes to update tracker.
-        """
-        try:
-            from engines.ml.performance_tracker import PerformanceTracker
-            from data.db import db as _db
-            tracker = PerformanceTracker()
-            # Get active model metadata for OOS baseline
-            model_version = _db.get_active_model_version("ensemble_forward_3m_ret")
-            if not model_version:
-                return {"status": "no_active_model"}
-            meta = model_version.metadata if hasattr(model_version, "metadata") else {}
-            oos_sharpe   = (meta.get("metrics", {}) or {}).get("wf_auc", 1.0)
-            oos_hit_rate = (meta.get("metrics", {}) or {}).get("wf_precision", 0.54)
-            report = tracker.compare(
-                model_id=model_version.version,
-                oos_sharpe=oos_sharpe,
-                oos_hit_rate=oos_hit_rate,
-                window_days=60,
-            )
-            # Update metrics
-            sovereign_metrics.live_sharpe.set(report.live_sharpe)
-            sovereign_metrics.oos_sharpe.set(report.oos_sharpe)
-            sovereign_metrics.sharpe_decay_pct.set(abs(report.sharpe_decay) * 100)
-            sovereign_metrics.model_return_correlation.set(report.return_corr)
-            # Activate guard if needed
-            guard = ModelGuard()
-            if report.action == "RETRAIN_NOW":
-                guard.force_fallback(f"OOS decay: {report.summary}")
-                sovereign_metrics.retrain_required.set(1.0)
-                db.log_engine_event("CRITICAL", "app.scheduler", "model_decay_fallback_activated",
-                                    {"summary": report.summary})
-            else:
-                sovereign_metrics.retrain_required.set(0.0)
-            db.log_engine_event("INFO", "app.scheduler", "oos_comparison", report.to_dict())
-            return report.to_dict()
-        except Exception as exc:
-            db.log_engine_event("WARN", "app.scheduler", "oos_comparison_failed", {"error": str(exc)})
-            return {"error": str(exc)}
 
 
 if __name__ == "__main__":
