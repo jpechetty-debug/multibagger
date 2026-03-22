@@ -21,7 +21,7 @@ from data.fetcher import DataFetcher
 from engines.audit.data_auditor import DataAuditor
 from engines.pipeline import MultiStrategyOrchestrator, PipelineOrchestrator
 from engines.backtest.backtest_engine import BacktestEngine
-from engines.ml.trainer import SovereignTrainer as ModelTrainer  # unified — removed legacy ml/
+from ml.train import ModelTrainer
 from models.schemas import AuditableField, parse_field_value
 from ticker_list import get_universe
 
@@ -460,7 +460,7 @@ def ml_ops(
 
         trained_version = None
         if retrain:
-            trained_version = ModelTrainer().run_training_pipeline()
+            trained_version = ModelTrainer().train()
 
         active_version = None
         if update:
