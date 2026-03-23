@@ -9,6 +9,10 @@ from nsepython import indiavix, nse_get_advances_declines
 import config
 from data.db import db
 from models.schemas import MarketRegime, RegimeResult
+from engines.regime.regime_tracker import RegimeTrackerV2 as RegimeEngine, RegimeV2Result as _RegimeV2Result
+
+# For backward compatibility with Fix 4
+RegimeResult = _RegimeV2Result
 
 
 class RegimeDetector:

@@ -163,3 +163,9 @@ runtime/
 *.csv
 *.log
 *.sqlite
+fix2.zip
+extracted_fixes/
+v1_verify.py
+test_schema.py
+test_schema_mismatch.py
+test_yfinance.py

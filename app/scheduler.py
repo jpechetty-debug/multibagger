@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+from typing import Any
+import time  # noqa: E402  (needed for job timestamps)
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -17,12 +21,13 @@ from data.db import db
 from engines.alert_engine import AlertEngine
 from engines.pipeline import PipelineOrchestrator
 from engines.ml.trainer import SovereignTrainer
-from engines.ml.decay_tracker import ModelDecayTracker
+from engines.ml.model_guard import ModelGuard
 from ticker_list import get_universe
-import time  # noqa: E402  (needed for job timestamps)
 from engines.monitoring.metrics import sovereign_metrics
 from engines.analysis.cycle_detector import CycleDetector
 from engines.ml.model_guard import ModelGuard
+
+logger = logging.getLogger(__name__)
 
 
 class AppScheduler:
@@ -40,7 +45,7 @@ class AppScheduler:
         self.pipeline = pipeline or PipelineOrchestrator()
         self.trainer = trainer or SovereignTrainer()
         self.alert_engine = alert_engine or AlertEngine()
-        self.decay_tracker = ModelDecayTracker()
+        self.guard = ModelGuard()
         self.scheduler = scheduler
         if self.scheduler is None and BackgroundScheduler is not None:
             self.scheduler = BackgroundScheduler(timezone=config.SCHEDULER_TIMEZONE)
@@ -114,6 +119,14 @@ class AppScheduler:
             self.optimize_databases,
             CronTrigger(hour=config.DB_OPTIMIZE_HOUR, minute=config.DB_OPTIMIZE_MINUTE, timezone=config.SCHEDULER_TIMEZONE),
             id="db_optimize",
+            replace_existing=True,
+        )
+        # PIT snapshot — daily at 06:30 IST (after data fetch, before main scan)
+        self.scheduler.add_job(
+            self.run_pit_snapshot,
+            CronTrigger(hour=6, minute=30, day_of_week="mon-fri",
+                        timezone=config.SCHEDULER_TIMEZONE),
+            id="pit_snapshot",
             replace_existing=True,
         )
         self.scheduler.add_job(
@@ -276,12 +289,11 @@ class AppScheduler:
 
         started_at = int(time.time())
         try:
-            # We use 6% absolute drop in AUC over last 3 days as emergency threshold
-            status = self.decay_tracker.check_for_retraining_trigger(auc_threshold=0.06)
+            status = self.guard.status()
             
-            if status["should_retrain"]:
+            if status["fallback_active"]:
                 db.log_engine_event("CRITICAL", "app.scheduler", "Model decay detected! Triggering emergency retrain.", status)
-                self.alert_engine.send_custom_alert("🚨 EMERGENCY RETRAIN TRIGGERED", f"Model decay detected. AUC drop: {status.get('auc_drop', 0):.4f}")
+                self.alert_engine.send_custom_alert("🚨 EMERGENCY RETRAIN TRIGGERED", f"Model guard activated fallback. Reason: {status.get('fallback_reason', 'unknown')}")
                 self.run_weekly_retrain()
             
             db.log_job_run("model_health_check", started_at, int(time.time()), "SUCCESS")
@@ -375,32 +387,150 @@ class AppScheduler:
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
 
-    def run_cycle_detection(self) -> dict:
-        """Run market cycle detection and persist snapshot."""
+    def run_pit_snapshot(self) -> dict:
+        """Snapshot all fundamentals into the point-in-time store.
+
+        FIX-5: The ML labeler requires fundamentals_pit to be populated.
+        This job runs once per trading day (06:30 IST) and writes the current
+        fundamental record for every ticker that has data in the main DB.
+        Over time this accumulates a historical dataset usable for training.
+        """
+        started_at = int(time.time())
+        saved      = 0
+        failed     = 0
+
         try:
-            from engines.regime.regime_engine import RegimeEngine
-            from engines.risk.vix_filter import VixFilter
-            regime_result = RegimeEngine().classify()
-            vix_result    = VixFilter().evaluate()
-            payload = regime_result.to_payload()
+            tickers = get_universe(config.DEFAULT_SCAN_UNIVERSE)
+            for ticker in tickers:
+                try:
+                    record = db.get_fundamental(ticker, effective=True)
+                    if record is None:
+                        continue
+
+                    # Build a JSON-serialisable dict from the Pydantic model
+                    fund_dict = record.model_dump()
+                    # Remove non-serialisable or internal fields
+                    for drop_key in ("ingestion_issues", "feature_vector"):
+                        fund_dict.pop(drop_key, None)
+
+                    source_meta = fund_dict.pop("source_metadata", {}) or {}
+
+                    with db.connection("pit") as conn:
+                        conn.execute(
+                            """
+                            INSERT INTO fundamentals_pit
+                                (ticker, captured_at, fundamentals_json, source_metadata_json)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                ticker,
+                                started_at,
+                                json.dumps(fund_dict, default=str),
+                                json.dumps(source_meta, default=str),
+                            ),
+                        )
+                    saved += 1
+                except Exception as exc:
+                    logger.debug("PIT snapshot failed for %s: %s", ticker, exc)
+                    failed += 1
+
+            db.log_engine_event(
+                "INFO", "app.scheduler", "pit_snapshot",
+                {"saved": saved, "failed": failed, "total": len(tickers)},
+            )
+            db.log_job_run("pit_snapshot", started_at, int(time.time()), "SUCCESS")
+            logger.info("PIT snapshot: %d saved, %d failed", saved, failed)
+            return {"saved": saved, "failed": failed}
+
+        except Exception as exc:
+            db.log_job_run("pit_snapshot", started_at, int(time.time()), "FAIL", str(exc))
+            logger.exception("PIT snapshot job failed")
+            return {"error": str(exc)}
+
+    def run_cycle_detection(self) -> dict:
+        """Run market cycle detection and persist snapshot.
+
+        FIX-5b: Market data is now sourced from real DB snapshots and live VIX
+        rather than being derived from the regime engine's own composite score.
+        This breaks the circular dependency:
+            regime score → cycle input → sector weights → score → regime score
+
+        Inputs used:
+        - breadth_ratio:        latest value from the ops market_snapshot table
+        - india_vix:            latest VIX from market_snapshot
+        - gsec_10y / repo_rate: documented constants (update monthly from RBI)
+        - fii_flow:             latest 20-day FII flow from market_snapshot
+
+        All values fall back to neutral defaults if snapshots are absent so the
+        job never crashes during cold-start.
+        """
+        try:
+            # ── Fetch real market inputs ───────────────────────────────────────
+            breadth_ratio = 1.0   # neutral default
+            india_vix     = 15.0  # neutral default
+            fii_20d_cr    = 0.0   # neutral default
+
+            try:
+                breadth_snap = db.get_latest_market_snapshot("breadth")
+                if breadth_snap:
+                    breadth_ratio = float(breadth_snap.get("payload", {}).get("breadth_ratio", 1.0))
+            except Exception:
+                pass
+
+            try:
+                vix_snap = db.get_latest_market_snapshot("india_vix")
+                if vix_snap:
+                    india_vix = float(vix_snap.get("payload", {}).get("vix_value", 15.0))
+            except Exception:
+                pass
+
+            try:
+                fii_snap = db.get_latest_market_snapshot("fii_flow")
+                if fii_snap:
+                    fii_20d_cr = float(fii_snap.get("payload", {}).get("net_fii_20d_cr", 0.0))
+            except Exception:
+                pass
+
+            # Breadth slope: positive when breadth_ratio > 1 (more advancers)
+            breadth_slope = (breadth_ratio - 1.0) * 2.0
+
+            # VIX → cyclical vs defensive relative strength proxy
+            # Low VIX = risk-on = cyclicals outperform
+            cyc_def = max(-10.0, min(10.0, (20.0 - india_vix) * 0.5))
+
             market_data = {
-                "nifty_close":         payload.get("signals", {}).get("nifty_trend", 50) * 235 + 21000,
-                "breadth_slope_20d":   payload.get("composite_score", 50) / 50 - 1,
-                "cyclical_vs_defensive": (payload.get("signals", {}).get("sector_strength", 50) - 50) / 10,
-                "gsec_10y":            6.85,
-                "repo_rate":           6.5,
-                "net_fii_20d_cr":      payload.get("signals", {}).get("fii_flow", 50) * 200 - 5000,
-                "fii_cyclical_pct":    payload.get("signals", {}).get("sector_strength", 50),
+                # ── Real inputs ──────────────────────────────────────────────
+                "breadth_slope_20d":      breadth_slope,
+                "cyclical_vs_defensive":  cyc_def,
+                "net_fii_20d_cr":         fii_20d_cr,
+                "fii_cyclical_pct":       60.0 if fii_20d_cr > 2000 else 40.0 if fii_20d_cr < -1000 else 50.0,
+
+                # ── Static / slowly-changing — update monthly from RBI ───────
+                # Last updated: 2026-03 (RBI MPC: repo 6.50%, 10Y Gsec ~6.85%)
+                "gsec_10y":   6.85,
+                "repo_rate":  6.50,
+
+                # ── EPS revision differential (not yet wired — neutral) ──────
+                "eps_revision_cyclical":   0.0,
+                "eps_revision_defensive":  0.0,
             }
+
             detector = CycleDetector()
             result   = detector.detect(market_data)
             detector.save_snapshot(result)
-            sovereign_metrics.regime_composite_score.set(payload.get("composite_score", 0))
-            db.log_engine_event("INFO", "app.scheduler", "cycle_detection",
-                                {"phase": result.phase, "confidence": result.confidence})
+
+            sovereign_metrics.regime_composite_score.set(
+                50.0 + (breadth_slope * 10)   # lightweight proxy for the gauge
+            )
+            db.log_engine_event(
+                "INFO", "app.scheduler", "cycle_detection",
+                {"phase": result.phase, "confidence": result.confidence,
+                 "breadth_slope": breadth_slope, "vix": india_vix},
+            )
             return result.to_dict()
         except Exception as exc:
             db.log_engine_event("WARN", "app.scheduler", "cycle_detection_failed", {"error": str(exc)})
+            logger.exception("Cycle detection job failed")
             return {"error": str(exc)}
 
     def run_oos_comparison(self) -> dict:
